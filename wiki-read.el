@@ -57,13 +57,29 @@
 	(wiki-read--shr-render-buffer (current-buffer) buffer)))
     ))
 
-(define-derived-mode wiki-mode special-mode "Wiki"
-  "Major mode for displaying wikimedia articles.")
-
 (defun wiki-read--get-api-prefix (host)
   "Get api prefix for `HOST'."
   (if (string-suffix-p "wikipedia.org" host)
       "w" ""))
+
+(defun wiki-read-imenu--heading-p (my props)
+  "Utility function."
+  (seq-contains-p (ensure-list props) my 'equal) )
+
+(defun wiki-read-imenu nil
+  "Imenu source for wiki-read."
+  (let (out)
+    (goto-char (point-min))
+    (while (setq match (text-property-search-forward 'face 'shr-h2 'wiki-read-imenu--heading-p 't))
+      (push `(,(buffer-substring-no-properties (line-beginning-position) (line-end-position)) .
+	      ,(prop-match-beginning match))
+	    out)
+      (forward-line))
+    out))
+
+(define-derived-mode wiki-mode special-mode "Wiki"
+  "Major mode for displaying wikimedia articles."
+  (setq-local imenu-create-index-function 'wiki-read-imenu))
 
 ;;;###autoload
 (defun wiki-read (url)
