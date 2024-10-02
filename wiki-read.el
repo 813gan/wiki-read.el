@@ -17,21 +17,28 @@
 
 (require 'json)
 (require 'url)
+(require 'url-parse)
 (require 'subr-x)
 
 (defvar wiki-read-url-template
   "https://%s/%s/api.php?action=parse&format=json&page=%s&formatversion=2")
 
-(defun wiki-read--goto-empty-line nil
-  (goto-char (point-min))
-  (search-forward "\n\n"))
+(defun wiki-read--url-retrieve (url)
+  "Wrapper around url-http that download `URL' without blocking thread."
+  (let* ((parsed-url (if (url-p url) url (url-generic-parse-url url)))
+	 (buf nil)
+	 (status nil)
+	 (cb (lambda (st &rest _) (setq status st buf (current-buffer)) )) )
+    (url-retrieve parsed-url cb nil)
+    (while (not status) (thread-yield) (sit-for 0.5))
+    buf))
 
 (defun wiki-read--fetch-url (api-url)
   "Fetch data about article for API `API-URL'."
-  (let* ((response-buf (url-retrieve-synchronously api-url))
+  (let* ((response-buf (wiki-read--url-retrieve api-url))
 	 (json-object-type 'plist)
 	 (json-array-type 'list)
-	 (resp (with-current-buffer response-buf (wiki-read--goto-empty-line) (json-read)))
+	 (resp (with-current-buffer response-buf (goto-char url-http-end-of-headers) (json-read)))
 	 (resp-parsed (plist-get resp :parse))
 	 (text (plist-get resp-parsed :text))
 	 (title (plist-get resp-parsed :title)) )
@@ -81,10 +88,16 @@
   "Major mode for displaying wikimedia articles."
   (setq-local imenu-create-index-function 'wiki-read-imenu))
 
+(defun wiki-read--handle-redirections (url)
+  (let ((parsed-url (url-generic-parse-url url)))
+    (if (string-match-p ".*/Special:Search\\?" (url-filename parsed-url))
+	(with-current-buffer (wiki-read--url-retrieve parsed-url) url-http-target-url)
+      parsed-url)))
+
 ;;;###autoload
 (defun wiki-read (url)
   "Render wikimedia article from `URL'."
-  (let* ((parsed-url (url-generic-parse-url url))
+  (let* ((parsed-url (wiki-read--handle-redirections url))
 	 (filename (url-filename parsed-url))
 	 (page-name (car (last (split-string filename "/"))))
 	 (host (url-host parsed-url))
@@ -93,10 +106,11 @@
 	 (buffer (get-buffer-create (format "*wiki %s %s*" page-name host) ))
 	 (inhibit-read-only 't))
     (with-current-buffer buffer
+      (pp parsed-url)
       (wiki-mode)
       (erase-buffer)
       (insert "Loading " url " ...") )
-    (make-thread (apply 'wiki-read--render api-url buffer nil) "wiki-read") ))
+    (make-thread (lambda nil (wiki-read--render api-url buffer)) "wiki-read") ))
 
 (provide 'wiki-read)
 
